@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .messages import Citation, TextPart, URLCitation
+    from .messages import Citation, ContainerFileCitation, TextPart, URLCitation
 
 
 def merge_citations(*citation_lists: list[Citation] | None) -> list[Citation]:
@@ -29,14 +29,16 @@ def merge_citations(*citation_lists: list[Citation] | None) -> list[Citation]:
     return result
 
 
-def validate_citation_indices(citation: URLCitation, content_length: int) -> bool:
+def validate_citation_indices(citation: URLCitation | ContainerFileCitation, content_length: int) -> bool:
     """Check if citation indices are valid for the given content length.
 
     Makes sure the start/end indices are non-negative, start <= end, and
     end doesn't exceed the content length.
 
+    Works with citations that have start_index and end_index fields.
+
     Args:
-        citation: The citation to check.
+        citation: The citation to check (URLCitation or ContainerFileCitation).
         content_length: How long the content is.
 
     Returns:
@@ -52,7 +54,7 @@ def validate_citation_indices(citation: URLCitation, content_length: int) -> boo
 
 
 def map_citation_to_text_part(
-    citation: URLCitation,
+    citation: URLCitation | ContainerFileCitation,
     text_parts: list[TextPart],
     content_offsets: list[int],
 ) -> int | None:
@@ -62,8 +64,10 @@ def map_citation_to_text_part(
     based on the offsets. The offsets tell us where each TextPart starts
     in the original content.
 
+    Works with citations that have start_index and end_index fields.
+
     Args:
-        citation: The citation to map.
+        citation: The citation to map (URLCitation or ContainerFileCitation).
         text_parts: List of TextParts to check.
         content_offsets: Where each TextPart starts in the original content.
             First should be 0, then cumulative lengths.

@@ -28,7 +28,10 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
+    ContainerFileCitation,
     DocumentUrl,
+    FileCitation,
+    FilePath,
     FilePart,
     FinishReason,
     ImageUrl,
@@ -589,22 +592,24 @@ class OpenAIChatModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
 
-    def _parse_openai_annotations(self, message: chat.ChatCompletionMessage, content: str | None) -> list[URLCitation]:
+    def _parse_openai_annotations(
+        self, message: chat.ChatCompletionMessage, content: str | None
+    ) -> list[URLCitation | FileCitation | ContainerFileCitation | FilePath]:
         """Extract citations from OpenAI's annotation format.
 
-        Pulls out url_citation annotations from the message and converts them
-        to our URLCitation format. Skips invalid ones.
+        Pulls out all annotation types from the message and converts them
+        to our citation format. Skips invalid ones.
 
         Args:
             message: The message with annotations.
             content: The message content for validation (can be None).
 
         Returns:
-            List of URLCitation objects, empty if no valid citations found.
+            List of citation objects, empty if no valid citations found.
         """
         from openai.types.chat.chat_completion_message import Annotation
 
-        citations: list[URLCitation] = []
+        citations: list[URLCitation | FileCitation | ContainerFileCitation | FilePath] = []
 
         if not hasattr(message, 'annotations') or message.annotations is None:
             return citations
@@ -618,35 +623,87 @@ class OpenAIChatModel(Model):
             if not isinstance(annotation, Annotation):
                 continue
 
-            if annotation.type != 'url_citation':
-                continue
-
-            url_citation = annotation.url_citation
-
             try:
-                url = url_citation.url
-                title = url_citation.title
-                if title == '':
-                    title = None
-                start_index = url_citation.start_index
-                end_index = url_citation.end_index
+                if annotation.type == 'url_citation':
+                    url_citation = annotation.url_citation
+                    url = url_citation.url
+                    title = url_citation.title
+                    if title == '':
+                        title = None
+                    start_index = url_citation.start_index
+                    end_index = url_citation.end_index
 
-                # Validate indices if we have the content
-                if content_length is not None:
-                    if start_index < 0 or end_index < 0:
-                        continue
-                    if start_index > end_index:
-                        continue
-                    if end_index > content_length:
-                        continue
+                    # Validate indices if we have the content
+                    if content_length is not None:
+                        if start_index < 0 or end_index < 0:
+                            continue
+                        if start_index > end_index:
+                            continue
+                        if end_index > content_length:
+                            continue
 
-                citation = URLCitation(
-                    url=url,
-                    title=title,
-                    start_index=start_index,
-                    end_index=end_index,
-                )
-                citations.append(citation)
+                    citation: URLCitation | FileCitation | ContainerFileCitation | FilePath = URLCitation(
+                        url=url,
+                        title=title,
+                        start_index=start_index,
+                        end_index=end_index,
+                    )
+                    citations.append(citation)
+
+                elif annotation.type == 'file_citation':
+                    file_citation = annotation.file_citation
+                    file_id = file_citation.file_id
+                    filename = getattr(file_citation, 'filename', None)
+                    if filename == '':
+                        filename = None
+                    index = getattr(file_citation, 'index', None)
+
+                    citation = FileCitation(
+                        file_id=file_id,
+                        filename=filename,
+                        index=index,
+                    )
+                    citations.append(citation)
+
+                elif annotation.type == 'container_file_citation':
+                    container_citation = annotation.container_file_citation
+                    container_id = container_citation.container_id
+                    file_id = container_citation.file_id
+                    filename = getattr(container_citation, 'filename', None)
+                    if filename == '':
+                        filename = None
+                    start_index = container_citation.start_index
+                    end_index = container_citation.end_index
+
+                    # Validate indices if we have the content
+                    if content_length is not None:
+                        if start_index < 0 or end_index < 0:
+                            continue
+                        if start_index > end_index:
+                            continue
+                        if end_index > content_length:
+                            continue
+
+                    citation = ContainerFileCitation(
+                        container_id=container_id,
+                        file_id=file_id,
+                        filename=filename,
+                        start_index=start_index,
+                        end_index=end_index,
+                    )
+                    citations.append(citation)
+
+                elif annotation.type == 'file_path':
+                    file_path = annotation.file_path
+                    file_id = file_path.file_id
+                    index = getattr(file_path, 'index', None)
+
+                    citation = FilePath(
+                        file_id=file_id,
+                        index=index,
+                    )
+                    citations.append(citation)
+
             except (AttributeError, ValueError, TypeError):
                 # Skip broken annotations
                 continue
@@ -768,13 +825,21 @@ class OpenAIChatModel(Model):
             # Map citations to TextParts and attach them
             if citations and text_parts:
                 # Group citations by TextPart index
-                citations_by_part: dict[int, list[URLCitation]] = {}
+                # Only map citations that have position information (start_index, end_index)
+                # FileCitation and FilePath are file-level references without position info
+                citations_by_part: dict[
+                    int, list[URLCitation | FileCitation | ContainerFileCitation | FilePath]
+                ] = {}
                 for citation in citations:
-                    part_index = map_citation_to_text_part(citation, text_parts, content_offsets)
-                    if part_index is not None:
-                        if part_index not in citations_by_part:
-                            citations_by_part[part_index] = []
-                        citations_by_part[part_index].append(citation)
+                    # Only map citations with start_index/end_index to TextParts
+                    if isinstance(citation, (URLCitation, ContainerFileCitation)):
+                        part_index = map_citation_to_text_part(citation, text_parts, content_offsets)
+                        if part_index is not None:
+                            if part_index not in citations_by_part:
+                                citations_by_part[part_index] = []
+                            citations_by_part[part_index].append(citation)
+                    # FileCitation and FilePath don't have position info, so we skip mapping them
+                    # They are file-level references, not inline citations
 
                 # Update TextParts in content_parts with citations
                 text_part_index = 0
@@ -2187,17 +2252,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _parse_responses_annotation(
         self, event: responses.ResponseOutputTextAnnotationAddedEvent
-    ) -> URLCitation | None:
+    ) -> URLCitation | FileCitation | ContainerFileCitation | FilePath | None:
         """Extract a citation from a Responses API annotation event.
 
-        Takes the annotation event and converts it to a URLCitation. Returns
-        None if the annotation is invalid or not a url_citation type.
+        Takes the annotation event and converts it to a citation object. Returns
+        None if the annotation is invalid or unsupported.
 
         Args:
             event: The annotation event from the Responses API.
 
         Returns:
-            A URLCitation if valid, None otherwise.
+            A citation object if valid, None otherwise.
         """
         try:
             annotation = event.annotation
@@ -2205,48 +2270,140 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if not hasattr(annotation, 'type'):
                 return None
 
-            if annotation.type != 'url_citation':
+            if annotation.type == 'url_citation':
+                if not hasattr(annotation, 'url_citation') or annotation.url_citation is None:
+                    return None
+
+                url_citation = annotation.url_citation
+
+                if (
+                    not hasattr(url_citation, 'url')
+                    or not hasattr(url_citation, 'start_index')
+                    or not hasattr(url_citation, 'end_index')
+                ):
+                    return None
+
+                url = url_citation.url
+                if not isinstance(url, str) or not url:
+                    return None
+
+                title = getattr(url_citation, 'title', None)
+                if title == '':
+                    title = None
+
+                start_index = url_citation.start_index
+                end_index = url_citation.end_index
+
+                if not isinstance(start_index, int) or not isinstance(end_index, int):
+                    return None
+
+                if start_index < 0 or end_index < 0:
+                    return None
+                if start_index > end_index:
+                    return None
+
+                # Can't validate against content length here since we might still be streaming
+                return URLCitation(
+                    url=url,
+                    title=title,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+
+            elif annotation.type == 'file_citation':
+                if not hasattr(annotation, 'file_citation') or annotation.file_citation is None:
+                    return None
+
+                file_citation = annotation.file_citation
+
+                if not hasattr(file_citation, 'file_id'):
+                    return None
+
+                file_id = file_citation.file_id
+                if not isinstance(file_id, str) or not file_id:
+                    return None
+
+                filename = getattr(file_citation, 'filename', None)
+                if filename == '':
+                    filename = None
+
+                index = getattr(file_citation, 'index', None)
+
+                return FileCitation(
+                    file_id=file_id,
+                    filename=filename,
+                    index=index,
+                )
+
+            elif annotation.type == 'container_file_citation':
+                if not hasattr(annotation, 'container_file_citation') or annotation.container_file_citation is None:
+                    return None
+
+                container_citation = annotation.container_file_citation
+
+                if (
+                    not hasattr(container_citation, 'container_id')
+                    or not hasattr(container_citation, 'file_id')
+                    or not hasattr(container_citation, 'start_index')
+                    or not hasattr(container_citation, 'end_index')
+                ):
+                    return None
+
+                container_id = container_citation.container_id
+                file_id = container_citation.file_id
+                if not isinstance(container_id, str) or not container_id:
+                    return None
+                if not isinstance(file_id, str) or not file_id:
+                    return None
+
+                filename = getattr(container_citation, 'filename', None)
+                if filename == '':
+                    filename = None
+
+                start_index = container_citation.start_index
+                end_index = container_citation.end_index
+
+                if not isinstance(start_index, int) or not isinstance(end_index, int):
+                    return None
+
+                if start_index < 0 or end_index < 0:
+                    return None
+                if start_index > end_index:
+                    return None
+
+                # Can't validate against content length here since we might still be streaming
+                return ContainerFileCitation(
+                    container_id=container_id,
+                    file_id=file_id,
+                    filename=filename,
+                    start_index=start_index,
+                    end_index=end_index,
+                )
+
+            elif annotation.type == 'file_path':
+                if not hasattr(annotation, 'file_path') or annotation.file_path is None:
+                    return None
+
+                file_path = annotation.file_path
+
+                if not hasattr(file_path, 'file_id'):
+                    return None
+
+                file_id = file_path.file_id
+                if not isinstance(file_id, str) or not file_id:
+                    return None
+
+                index = getattr(file_path, 'index', None)
+
+                return FilePath(
+                    file_id=file_id,
+                    index=index,
+                )
+
+            else:
+                # Unknown annotation type
                 return None
 
-            if not hasattr(annotation, 'url_citation') or annotation.url_citation is None:
-                return None
-
-            url_citation = annotation.url_citation
-
-            if (
-                not hasattr(url_citation, 'url')
-                or not hasattr(url_citation, 'start_index')
-                or not hasattr(url_citation, 'end_index')
-            ):
-                return None
-
-            url = url_citation.url
-            if not isinstance(url, str) or not url:
-                return None
-
-            title = getattr(url_citation, 'title', None)
-            if title == '':
-                title = None
-
-            start_index = url_citation.start_index
-            end_index = url_citation.end_index
-
-            if not isinstance(start_index, int) or not isinstance(end_index, int):
-                return None
-
-            if start_index < 0 or end_index < 0:
-                return None
-            if start_index > end_index:
-                return None
-
-            # Can't validate against content length here since we might still be streaming
-            citation = URLCitation(
-                url=url,
-                title=title,
-                start_index=start_index,
-                end_index=end_index,
-            )
-            return citation
         except (AttributeError, ValueError, TypeError):
             return None
 

@@ -1056,6 +1056,94 @@ class URLCitation:
 
 
 @dataclass(repr=False)
+class FileCitation:
+    """A citation to a file, used by OpenAI.
+
+    References a file that was used to generate the response. Commonly used
+    with file search tools or when files are uploaded to OpenAI.
+    """
+
+    file_id: str
+    """The ID of the file."""
+
+    _: KW_ONLY
+
+    filename: str | None = None
+    """The filename of the file cited."""
+
+    index: int | None = None
+    """The index of the file in the list of files (0-based)."""
+
+    def __post_init__(self) -> None:
+        """Check that index is valid if provided."""
+        if self.index is not None and self.index < 0:
+            raise ValueError(f'index must be non-negative, got {self.index}')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ContainerFileCitation:
+    """A citation for a container file, used by OpenAI code interpreter.
+
+    References files created by OpenAI's code interpreter tool during execution.
+    Includes character ranges showing where in the text the citation applies.
+    """
+
+    container_id: str
+    """The ID of the container file."""
+
+    file_id: str
+    """The ID of the file."""
+
+    _: KW_ONLY
+
+    filename: str | None = None
+    """The filename of the container file cited."""
+
+    start_index: int
+    """Where the citation starts in the text (0-based, inclusive)."""
+
+    end_index: int
+    """Where the citation ends in the text (0-based, exclusive)."""
+
+    def __post_init__(self) -> None:
+        """Check that citation indices are valid."""
+        if self.start_index < 0:
+            raise ValueError(f'start_index must be non-negative, got {self.start_index}')
+        if self.end_index < 0:
+            raise ValueError(f'end_index must be non-negative, got {self.end_index}')
+        if self.start_index > self.end_index:
+            raise ValueError(f'start_index ({self.start_index}) must be <= end_index ({self.end_index})')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class FilePath:
+    """A path to a file, used by OpenAI.
+
+    References a file by its path. Used in certain OpenAI workflows
+    where file paths are relevant.
+    """
+
+    file_id: str
+    """The ID of the file."""
+
+    _: KW_ONLY
+
+    index: int | None = None
+    """The index of the file in the list of files (0-based)."""
+
+    def __post_init__(self) -> None:
+        """Check that index is valid if provided."""
+        if self.index is not None and self.index < 0:
+            raise ValueError(f'index must be non-negative, got {self.index}')
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class ToolResultCitation:
     """A citation from a tool result, used by Anthropic.
 
@@ -1108,11 +1196,13 @@ class GroundingCitation:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-Citation: TypeAlias = URLCitation | ToolResultCitation | GroundingCitation
+Citation: TypeAlias = (
+    URLCitation | FileCitation | ContainerFileCitation | FilePath | ToolResultCitation | GroundingCitation
+)
 """All possible citation types from different providers.
 
 Covers:
-- OpenAI (URLCitation)
+- OpenAI (URLCitation, FileCitation, ContainerFileCitation, FilePath)
 - Anthropic (ToolResultCitation)
 - Google (GroundingCitation)
 """

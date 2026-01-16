@@ -1240,3 +1240,643 @@ def test_process_response_many_citations():
     # Verify a few citations
     assert text_parts[0].citations[0].url == 'https://example.com/0'
     assert text_parts[0].citations[49].url == 'https://example.com/49'
+
+
+# Tests for FileCitation
+
+
+def test_parse_file_citation_single():
+    """Test parsing a single file_citation annotation."""
+    from pydantic_ai import FileCitation
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    file_citation = AnnotationFileCitation(
+        file_id='file-abc123',
+        filename='document.pdf',
+        index=0,
+        type='file_citation',
+    )
+    annotation = Annotation(type='file_citation', file_citation=file_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='According to the document',
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content='According to the document')
+    assert len(citations) == 1
+    assert isinstance(citations[0], FileCitation)
+    assert citations[0].file_id == 'file-abc123'
+    assert citations[0].filename == 'document.pdf'
+    assert citations[0].index == 0
+
+
+def test_parse_file_citation_no_optional_fields():
+    """Test parsing file_citation without optional fields."""
+    from pydantic_ai import FileCitation
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Create citation with only required field
+    file_citation = AnnotationFileCitation(
+        file_id='file-xyz789',
+        filename='',  # Empty filename
+        index=0,
+        type='file_citation',
+    )
+    annotation = Annotation(type='file_citation', file_citation=file_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='Based on the file',
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content='Based on the file')
+    assert len(citations) == 1
+    assert isinstance(citations[0], FileCitation)
+    assert citations[0].file_id == 'file-xyz789'
+    assert citations[0].filename is None  # Empty string converted to None
+
+
+def test_parse_multiple_file_citations():
+    """Test parsing multiple file_citation annotations."""
+    from pydantic_ai import FileCitation
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    file_citation1 = AnnotationFileCitation(
+        file_id='file-1',
+        filename='doc1.pdf',
+        index=0,
+        type='file_citation',
+    )
+    file_citation2 = AnnotationFileCitation(
+        file_id='file-2',
+        filename='doc2.pdf',
+        index=1,
+        type='file_citation',
+    )
+    annotation1 = Annotation(type='file_citation', file_citation=file_citation1)
+    annotation2 = Annotation(type='file_citation', file_citation=file_citation2)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='From multiple documents',
+        annotations=[annotation1, annotation2],
+    )
+
+    citations = model._parse_openai_annotations(message, content='From multiple documents')
+    assert len(citations) == 2
+    assert all(isinstance(c, FileCitation) for c in citations)
+    assert citations[0].file_id == 'file-1'
+    assert citations[1].file_id == 'file-2'
+
+
+# Tests for ContainerFileCitation
+
+
+def test_parse_container_file_citation_single():
+    """Test parsing a single container_file_citation annotation."""
+    from pydantic_ai import ContainerFileCitation
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationContainerFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    container_citation = AnnotationContainerFileCitation(
+        container_id='container-abc',
+        file_id='file-xyz',
+        filename='output.png',
+        start_index=0,
+        end_index=10,
+        type='container_file_citation',
+    )
+    annotation = Annotation(type='container_file_citation', container_file_citation=container_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='Here is the result from code execution.',
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content='Here is the result from code execution.')
+    assert len(citations) == 1
+    assert isinstance(citations[0], ContainerFileCitation)
+    assert citations[0].container_id == 'container-abc'
+    assert citations[0].file_id == 'file-xyz'
+    assert citations[0].filename == 'output.png'
+    assert citations[0].start_index == 0
+    assert citations[0].end_index == 10
+
+
+def test_parse_container_file_citation_no_filename():
+    """Test parsing container_file_citation without filename."""
+    from pydantic_ai import ContainerFileCitation
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationContainerFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    container_citation = AnnotationContainerFileCitation(
+        container_id='container-123',
+        file_id='file-456',
+        filename='',  # Empty filename
+        start_index=5,
+        end_index=15,
+        type='container_file_citation',
+    )
+    annotation = Annotation(type='container_file_citation', container_file_citation=container_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='Code execution output',
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content='Code execution output')
+    assert len(citations) == 1
+    assert isinstance(citations[0], ContainerFileCitation)
+    assert citations[0].filename is None  # Empty string converted to None
+
+
+def test_parse_container_file_citation_invalid_indices():
+    """Test parsing container_file_citation with invalid indices (should be skipped)."""
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationContainerFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    # Create citation with start > end (invalid)
+    container_citation = AnnotationContainerFileCitation(
+        container_id='container-abc',
+        file_id='file-xyz',
+        filename='output.png',
+        start_index=20,
+        end_index=10,  # Invalid: end < start
+        type='container_file_citation',
+    )
+    annotation = Annotation(type='container_file_citation', container_file_citation=container_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='Short',
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content='Short')
+    assert citations == []  # Invalid citation should be skipped
+
+
+def test_parse_container_file_citation_out_of_bounds():
+    """Test parsing container_file_citation with indices out of content bounds."""
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationContainerFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    content = 'Short'
+    container_citation = AnnotationContainerFileCitation(
+        container_id='container-abc',
+        file_id='file-xyz',
+        filename='output.png',
+        start_index=0,
+        end_index=100,  # Out of bounds
+        type='container_file_citation',
+    )
+    annotation = Annotation(type='container_file_citation', container_file_citation=container_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content=content,
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content=content)
+    assert citations == []  # Out of bounds citation should be skipped
+
+
+# Tests for FilePath
+
+
+def test_parse_file_path_single():
+    """Test parsing a single file_path annotation."""
+    from pydantic_ai import FilePath
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationFilePath,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    file_path = AnnotationFilePath(
+        file_id='file-path-123',
+        index=0,
+        type='file_path',
+    )
+    annotation = Annotation(type='file_path', file_path=file_path)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='File path reference',
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content='File path reference')
+    assert len(citations) == 1
+    assert isinstance(citations[0], FilePath)
+    assert citations[0].file_id == 'file-path-123'
+    assert citations[0].index == 0
+
+
+def test_parse_file_path_no_index():
+    """Test parsing file_path without index field."""
+    from pydantic_ai import FilePath
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationFilePath,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    file_path = AnnotationFilePath(
+        file_id='file-path-456',
+        index=0,
+        type='file_path',
+    )
+    annotation = Annotation(type='file_path', file_path=file_path)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='Path info',
+        annotations=[annotation],
+    )
+
+    citations = model._parse_openai_annotations(message, content='Path info')
+    assert len(citations) == 1
+    assert isinstance(citations[0], FilePath)
+    assert citations[0].file_id == 'file-path-456'
+
+
+# Tests for mixed annotation types
+
+
+def test_parse_mixed_annotation_types():
+    """Test parsing multiple different annotation types in one message."""
+    from pydantic_ai import ContainerFileCitation, FileCitation, FilePath, URLCitation
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationContainerFileCitation,
+            AnnotationFileCitation,
+            AnnotationFilePath,
+            AnnotationURLCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    url_citation = AnnotationURLCitation(
+        url='https://example.com',
+        title='Example',
+        start_index=0,
+        end_index=5,
+    )
+    file_citation = AnnotationFileCitation(
+        file_id='file-123',
+        filename='doc.pdf',
+        index=0,
+        type='file_citation',
+    )
+    container_citation = AnnotationContainerFileCitation(
+        container_id='container-abc',
+        file_id='file-xyz',
+        filename='output.png',
+        start_index=6,
+        end_index=10,
+        type='container_file_citation',
+    )
+    file_path = AnnotationFilePath(
+        file_id='path-789',
+        index=1,
+        type='file_path',
+    )
+
+    annotation1 = Annotation(type='url_citation', url_citation=url_citation)
+    annotation2 = Annotation(type='file_citation', file_citation=file_citation)
+    annotation3 = Annotation(type='container_file_citation', container_file_citation=container_citation)
+    annotation4 = Annotation(type='file_path', file_path=file_path)
+
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='Mixed citations',
+        annotations=[annotation1, annotation2, annotation3, annotation4],
+    )
+
+    citations = model._parse_openai_annotations(message, content='Mixed citations')
+    assert len(citations) == 4
+    assert isinstance(citations[0], URLCitation)
+    assert isinstance(citations[1], FileCitation)
+    assert isinstance(citations[2], ContainerFileCitation)
+    assert isinstance(citations[3], FilePath)
+
+
+# Integration tests with _process_response
+
+
+def test_process_response_with_file_citation():
+    """Test that file citations are attached to TextPart in response."""
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
+
+    from pydantic_ai import FileCitation, TextPart
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        from .mock_openai import MockOpenAI
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    file_citation = AnnotationFileCitation(
+        file_id='file-abc123',
+        filename='document.pdf',
+        index=0,
+        type='file_citation',
+    )
+    annotation = Annotation(type='file_citation', file_citation=file_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='According to the document',
+        annotations=[annotation],
+    )
+
+    completion = chat.ChatCompletion(
+        id='test-123',
+        choices=[Choice(finish_reason='stop', index=0, message=message)],
+        created=1704067200,
+        model='gpt-4o',
+        object='chat.completion',
+    )
+
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    response = model._process_response(completion)
+
+    text_parts = [part for part in response.parts if isinstance(part, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].citations is not None
+    assert len(text_parts[0].citations) == 1
+    assert isinstance(text_parts[0].citations[0], FileCitation)
+    assert text_parts[0].citations[0].file_id == 'file-abc123'
+
+
+def test_process_response_with_container_file_citation():
+    """Test that container file citations are attached to TextPart in response."""
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
+
+    from pydantic_ai import ContainerFileCitation, TextPart
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationContainerFileCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        from .mock_openai import MockOpenAI
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    container_citation = AnnotationContainerFileCitation(
+        container_id='container-abc',
+        file_id='file-xyz',
+        filename='output.png',
+        start_index=0,
+        end_index=10,
+        type='container_file_citation',
+    )
+    annotation = Annotation(type='container_file_citation', container_file_citation=container_citation)
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='Generated output',
+        annotations=[annotation],
+    )
+
+    completion = chat.ChatCompletion(
+        id='test-123',
+        choices=[Choice(finish_reason='stop', index=0, message=message)],
+        created=1704067200,
+        model='gpt-4o',
+        object='chat.completion',
+    )
+
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    response = model._process_response(completion)
+
+    text_parts = [part for part in response.parts if isinstance(part, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].citations is not None
+    assert len(text_parts[0].citations) == 1
+    assert isinstance(text_parts[0].citations[0], ContainerFileCitation)
+    assert text_parts[0].citations[0].container_id == 'container-abc'
+
+
+def test_process_response_with_all_citation_types():
+    """Test response with all citation types mixed together."""
+    from openai.types import chat
+    from openai.types.chat.chat_completion import Choice
+
+    from pydantic_ai import ContainerFileCitation, FileCitation, FilePath, TextPart, URLCitation
+
+    with try_import() as imports_successful:
+        from openai.types.chat.chat_completion_message import (
+            Annotation,
+            AnnotationContainerFileCitation,
+            AnnotationFileCitation,
+            AnnotationFilePath,
+            AnnotationURLCitation,
+            ChatCompletionMessage,
+        )
+
+        from pydantic_ai.models.openai import OpenAIChatModel
+        from pydantic_ai.providers.openai import OpenAIProvider
+
+        from .mock_openai import MockOpenAI
+
+    if not imports_successful():
+        pytest.skip('OpenAI SDK not installed')
+
+    url_citation = AnnotationURLCitation(
+        url='https://example.com',
+        title='Example',
+        start_index=0,
+        end_index=5,
+    )
+    file_citation = AnnotationFileCitation(
+        file_id='file-123',
+        filename='doc.pdf',
+        index=0,
+        type='file_citation',
+    )
+    container_citation = AnnotationContainerFileCitation(
+        container_id='container-abc',
+        file_id='file-xyz',
+        filename='output.png',
+        start_index=6,
+        end_index=10,
+        type='container_file_citation',
+    )
+    file_path = AnnotationFilePath(
+        file_id='path-789',
+        index=1,
+        type='file_path',
+    )
+
+    annotation1 = Annotation(type='url_citation', url_citation=url_citation)
+    annotation2 = Annotation(type='file_citation', file_citation=file_citation)
+    annotation3 = Annotation(type='container_file_citation', container_file_citation=container_citation)
+    annotation4 = Annotation(type='file_path', file_path=file_path)
+
+    message = ChatCompletionMessage(
+        role='assistant',
+        content='All types',
+        annotations=[annotation1, annotation2, annotation3, annotation4],
+    )
+
+    completion = chat.ChatCompletion(
+        id='test-123',
+        choices=[Choice(finish_reason='stop', index=0, message=message)],
+        created=1704067200,
+        model='gpt-4o',
+        object='chat.completion',
+    )
+
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    response = model._process_response(completion)
+
+    text_parts = [part for part in response.parts if isinstance(part, TextPart)]
+    assert len(text_parts) == 1
+    assert text_parts[0].citations is not None
+    assert len(text_parts[0].citations) == 4
+    assert isinstance(text_parts[0].citations[0], URLCitation)
+    assert isinstance(text_parts[0].citations[1], FileCitation)
+    assert isinstance(text_parts[0].citations[2], ContainerFileCitation)
+    assert isinstance(text_parts[0].citations[3], FilePath)
