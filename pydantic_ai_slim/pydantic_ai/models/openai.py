@@ -14,7 +14,6 @@ from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._citation_utils import map_citation_to_text_part
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -28,10 +27,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     CachePoint,
-    ContainerFileCitation,
     DocumentUrl,
-    FileCitation,
-    FilePath,
     FilePart,
     FinishReason,
     ImageUrl,
@@ -46,6 +42,7 @@ from ..messages import (
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolResultCitation,
     ToolReturnPart,
     URLCitation,
     UserPromptPart,
@@ -594,11 +591,12 @@ class OpenAIChatModel(Model):
 
     def _parse_openai_annotations(
         self, message: chat.ChatCompletionMessage, content: str | None
-    ) -> list[URLCitation | FileCitation | ContainerFileCitation | FilePath]:
+    ) -> list[URLCitation | ToolResultCitation]:
         """Extract citations from OpenAI's annotation format.
 
-        Pulls out all annotation types from the message and converts them
-        to our citation format. Skips invalid ones.
+        Converts OpenAI annotations to our citation format. For positional annotations like
+        url_citation and container_file_citation, normalizes to common fields. For all
+        annotation types, stores the full payload in citation_data for lossless access.
 
         Args:
             message: The message with annotations.
@@ -609,7 +607,7 @@ class OpenAIChatModel(Model):
         """
         from openai.types.chat.chat_completion_message import Annotation
 
-        citations: list[URLCitation | FileCitation | ContainerFileCitation | FilePath] = []
+        citations: list[URLCitation | ToolResultCitation] = []
 
         if not hasattr(message, 'annotations') or message.annotations is None:
             return citations
@@ -642,7 +640,7 @@ class OpenAIChatModel(Model):
                         if end_index > content_length:
                             continue
 
-                    citation: URLCitation | FileCitation | ContainerFileCitation | FilePath = URLCitation(
+                    citation: URLCitation | ToolResultCitation = URLCitation(
                         url=url,
                         title=title,
                         start_index=start_index,
@@ -658,10 +656,14 @@ class OpenAIChatModel(Model):
                         filename = None
                     index = getattr(file_citation, 'index', None)
 
-                    citation = FileCitation(
-                        file_id=file_id,
-                        filename=filename,
-                        index=index,
+                    citation = ToolResultCitation(
+                        provider_name='openai',
+                        kind='file_citation',
+                        citation_data={
+                            'file_id': file_id,
+                            'filename': filename,
+                            'index': index,
+                        },
                     )
                     citations.append(citation)
 
@@ -684,12 +686,18 @@ class OpenAIChatModel(Model):
                         if end_index > content_length:
                             continue
 
-                    citation = ContainerFileCitation(
-                        container_id=container_id,
-                        file_id=file_id,
-                        filename=filename,
+                    citation = ToolResultCitation(
+                        provider_name='openai',
+                        kind='container_file_citation',
                         start_index=start_index,
                         end_index=end_index,
+                        citation_data={
+                            'container_id': container_id,
+                            'file_id': file_id,
+                            'filename': filename,
+                            'start_index': start_index,
+                            'end_index': end_index,
+                        },
                     )
                     citations.append(citation)
 
@@ -698,9 +706,13 @@ class OpenAIChatModel(Model):
                     file_id = file_path.file_id
                     index = getattr(file_path, 'index', None)
 
-                    citation = FilePath(
-                        file_id=file_id,
-                        index=index,
+                    citation = ToolResultCitation(
+                        provider_name='openai',
+                        kind='file_path',
+                        citation_data={
+                            'file_id': file_id,
+                            'index': index,
+                        },
                     )
                     citations.append(citation)
 
@@ -826,19 +838,38 @@ class OpenAIChatModel(Model):
             if citations and text_parts:
                 # Group citations by TextPart index
                 # Only map citations that have position information (start_index, end_index)
-                # FileCitation and FilePath are file-level references without position info
-                citations_by_part: dict[
-                    int, list[URLCitation | FileCitation | ContainerFileCitation | FilePath]
-                ] = {}
+                citations_by_part: dict[int, list[URLCitation | ToolResultCitation]] = {}
                 for citation in citations:
                     # Only map citations with start_index/end_index to TextParts
-                    if isinstance(citation, (URLCitation, ContainerFileCitation)):
-                        part_index = map_citation_to_text_part(citation, text_parts, content_offsets)
+                    # Check for positional citations (URLCitation or ToolResultCitation with start_index)
+                    if isinstance(citation, URLCitation) or (
+                        isinstance(citation, ToolResultCitation)
+                        and citation.start_index is not None
+                        and citation.end_index is not None
+                    ):
+                        # Map citation to TextPart based on start_index
+                        part_index = None
+                        start_idx = citation.start_index
+                        for i, offset in enumerate(content_offsets):
+                            part_length = len(text_parts[i].content)
+                            part_start = offset
+                            part_end = offset + part_length
+
+                            # Citation starts somewhere in this part
+                            if part_start <= start_idx < part_end:
+                                part_index = i
+                                break
+
+                            # Edge case: citation is exactly at the end of the last part
+                            if i == len(text_parts) - 1 and start_idx == part_end:
+                                part_index = i
+                                break
+
                         if part_index is not None:
                             if part_index not in citations_by_part:
                                 citations_by_part[part_index] = []
                             citations_by_part[part_index].append(citation)
-                    # FileCitation and FilePath don't have position info, so we skip mapping them
+                    # Citations without position info (e.g., file_citation, file_path) are skipped
                     # They are file-level references, not inline citations
 
                 # Update TextParts in content_parts with citations
@@ -2252,7 +2283,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _parse_responses_annotation(
         self, event: responses.ResponseOutputTextAnnotationAddedEvent
-    ) -> URLCitation | FileCitation | ContainerFileCitation | FilePath | None:
+    ) -> URLCitation | ToolResultCitation | None:
         """Extract a citation from a Responses API annotation event.
 
         Takes the annotation event and converts it to a citation object. Returns
@@ -2329,10 +2360,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 index = getattr(file_citation, 'index', None)
 
-                return FileCitation(
-                    file_id=file_id,
-                    filename=filename,
-                    index=index,
+                return ToolResultCitation(
+                    provider_name='openai',
+                    kind='file_citation',
+                    citation_data={
+                        'file_id': file_id,
+                        'filename': filename,
+                        'index': index,
+                    },
                 )
 
             elif annotation.type == 'container_file_citation':
@@ -2372,12 +2407,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     return None
 
                 # Can't validate against content length here since we might still be streaming
-                return ContainerFileCitation(
-                    container_id=container_id,
-                    file_id=file_id,
-                    filename=filename,
+                return ToolResultCitation(
+                    provider_name='openai',
+                    kind='container_file_citation',
                     start_index=start_index,
                     end_index=end_index,
+                    citation_data={
+                        'container_id': container_id,
+                        'file_id': file_id,
+                        'filename': filename,
+                        'start_index': start_index,
+                        'end_index': end_index,
+                    },
                 )
 
             elif annotation.type == 'file_path':
@@ -2395,9 +2436,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 index = getattr(file_path, 'index', None)
 
-                return FilePath(
-                    file_id=file_id,
-                    index=index,
+                return ToolResultCitation(
+                    provider_name='openai',
+                    kind='file_path',
+                    citation_data={
+                        'file_id': file_id,
+                        'index': index,
+                    },
                 )
 
             else:

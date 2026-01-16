@@ -1056,112 +1056,40 @@ class URLCitation:
 
 
 @dataclass(repr=False)
-class FileCitation:
-    """A citation to a file, used by OpenAI.
-
-    References a file that was used to generate the response. Commonly used
-    with file search tools or when files are uploaded to OpenAI.
-    """
-
-    file_id: str
-    """The ID of the file."""
-
-    _: KW_ONLY
-
-    filename: str | None = None
-    """The filename of the file cited."""
-
-    index: int | None = None
-    """The index of the file in the list of files (0-based)."""
-
-    def __post_init__(self) -> None:
-        """Check that index is valid if provided."""
-        if self.index is not None and self.index < 0:
-            raise ValueError(f'index must be non-negative, got {self.index}')
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False)
-class ContainerFileCitation:
-    """A citation for a container file, used by OpenAI code interpreter.
-
-    References files created by OpenAI's code interpreter tool during execution.
-    Includes character ranges showing where in the text the citation applies.
-    """
-
-    container_id: str
-    """The ID of the container file."""
-
-    file_id: str
-    """The ID of the file."""
-
-    _: KW_ONLY
-
-    filename: str | None = None
-    """The filename of the container file cited."""
-
-    start_index: int
-    """Where the citation starts in the text (0-based, inclusive)."""
-
-    end_index: int
-    """Where the citation ends in the text (0-based, exclusive)."""
-
-    def __post_init__(self) -> None:
-        """Check that citation indices are valid."""
-        if self.start_index < 0:
-            raise ValueError(f'start_index must be non-negative, got {self.start_index}')
-        if self.end_index < 0:
-            raise ValueError(f'end_index must be non-negative, got {self.end_index}')
-        if self.start_index > self.end_index:
-            raise ValueError(f'start_index ({self.start_index}) must be <= end_index ({self.end_index})')
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False)
-class FilePath:
-    """A path to a file, used by OpenAI.
-
-    References a file by its path. Used in certain OpenAI workflows
-    where file paths are relevant.
-    """
-
-    file_id: str
-    """The ID of the file."""
-
-    _: KW_ONLY
-
-    index: int | None = None
-    """The index of the file in the list of files (0-based)."""
-
-    def __post_init__(self) -> None:
-        """Check that index is valid if provided."""
-        if self.index is not None and self.index < 0:
-            raise ValueError(f'index must be non-negative, got {self.index}')
-
-    __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-@dataclass(repr=False)
 class ToolResultCitation:
-    """A citation from a tool result, used by Anthropic.
+    """A citation from a tool result or provider annotation.
 
-    Comes from tool execution results like web searches.
+    Used for:
+    - Anthropic tool execution results (e.g., web searches)
+    - OpenAI Responses API annotations (file citations, container files, file paths)
+    - Other provider-specific annotations
     """
 
-    tool_name: str
-    """Which tool generated this citation."""
-
     _: KW_ONLY
+
+    tool_name: str | None = None
+    """Which tool generated this citation (for Anthropic tool results)."""
 
     tool_call_id: str | None = None
-    """ID of the tool call that generated this citation."""
+    """ID of the tool call that generated this citation (for Anthropic)."""
+
+    provider_name: str | None = None
+    """Provider that generated this citation (e.g., 'openai', 'anthropic')."""
+
+    kind: str | None = None
+    """Type of citation from the provider (e.g., 'file_citation', 'container_file_citation', 'file_path')."""
+
+    start_index: int | None = None
+    """Where the citation starts in the text (0-based, inclusive), if positional."""
+
+    end_index: int | None = None
+    """Where the citation ends in the text (0-based, exclusive), if positional."""
 
     citation_data: dict[str, Any] | None = None
-    """Extra citation data from the tool result.
+    """Full provider-specific citation data.
 
-    Structure varies by provider.
+    Contains the complete annotation payload from the provider, allowing lossless
+    round-tripping and access to provider-specific fields. Structure varies by provider.
     """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1196,13 +1124,11 @@ class GroundingCitation:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-Citation: TypeAlias = (
-    URLCitation | FileCitation | ContainerFileCitation | FilePath | ToolResultCitation | GroundingCitation
-)
+Citation: TypeAlias = URLCitation | ToolResultCitation | GroundingCitation
 """All possible citation types from different providers.
 
 Covers:
-- OpenAI (URLCitation, FileCitation, ContainerFileCitation, FilePath)
+- OpenAI (URLCitation, ToolResultCitation)
 - Anthropic (ToolResultCitation)
 - Google (GroundingCitation)
 """
